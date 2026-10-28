@@ -14,8 +14,27 @@ st.set_page_config(page_title="Concrete Multi-Property Predictor", page_icon="�
 st.title("🏗️ Concrete Multi-Property Predictor")
 st.write("""
 Predict key **Fresh** and **Hardened State** concrete properties using Machine Learning. 
-Enter your exact mix design proportions below and click predict.
+Outputs include laboratory baseline estimates alongside **Field/Site-Calibrated** values.
 """)
+
+# --- Sidebar About Section ---
+with st.sidebar:
+    st.header("ℹ️ About the App")
+    st.markdown("""
+    **Concrete Multi-Property Predictor**  
+    An AI-powered decision support tool bridging concrete materials science with computational machine learning.
+    
+    * **Algorithm:** Random Forest Regressor ($R^2 \\approx 0.88$, $\\text{MAE} \\approx 3.73\\text{ MPa}$)
+    * **Key Outputs:** 
+      - Compressive Strength ($f_{ck}$)
+      - Flexural Modulus of Rupture ($f_{cr}$ via IS 456)
+      - Fresh Slump (mm)
+    * **Interpretability:** Explainable AI via SHAP Waterfall plots
+    
+    **Developed by:** Final Year B.E. Civil Engineering Project Batch (2027)
+    """)
+    st.divider()
+    st.caption("Designed for rapid mix-design evaluation and quality control.")
 
 # --- Model Training & Caching ---
 @st.cache_resource
@@ -56,7 +75,7 @@ if model is not None:
     col_m2.metric("R² Score", f"{r2:.2f}")
     st.divider()
 
-    # --- User Input Number Boxes (Replaced Sliders) ---
+    # --- User Input Number Boxes ---
     st.subheader("🧪 Input Mix Design Proportions (Type exact values)")
     
     col_left, col_right = st.columns(2)
@@ -81,13 +100,18 @@ if model is not None:
         input_df = pd.DataFrame([[cement, slag, fly_ash, water, superplasticizer, coarse_agg, fine_agg, age]], 
                                 columns=feature_names)
         
+        # 1. Base Laboratory Prediction
         input_scaled = scaler.transform(input_df)
-        comp_strength = model.predict(input_scaled)[0]
+        lab_comp_strength = model.predict(input_scaled)[0]
 
-        # Flexural Strength calculation (IS 456 formula)
-        flex_strength = 0.7 * np.sqrt(max(0, comp_strength))
+        # 2. Site Calibration: Empirical Reduction Factor (k = 0.88)
+        k_factor = 0.88
+        site_comp_strength = lab_comp_strength * k_factor
 
-        # Slump estimation formula
+        # 3. Flexural Strength (IS 456 formula on calibrated site strength: f_cr = 0.7 * sqrt(f_ck))
+        flex_strength = 0.7 * np.sqrt(max(0, site_comp_strength))
+
+        # 4. Fresh Concrete Slump Estimation (mm)
         wc_ratio = water / cement if cement > 0 else 0.5
         base_slump = (wc_ratio - 0.25) * 200 + (superplasticizer * 8.0)
         slump_mm = max(0.0, min(250.0, base_slump))
@@ -96,14 +120,16 @@ if model is not None:
         st.divider()
         st.subheader("🎯 Predicted Concrete Properties")
         
-        col_res1, col_res2, col_res3 = st.columns(3)
-        col_res1.metric("Compressive Strength (f_ck)", f"{comp_strength:.2f} MPa")
-        col_res2.metric("Flexural Strength (f_cr)", f"{flex_strength:.2f} MPa")
-        col_res3.metric("Workability (Slump)", f"{slump_mm:.0f} mm")
+        col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+        col_res1.metric("Lab Baseline Strength", f"{lab_comp_strength:.2f} MPa")
+        col_res2.metric("Site Calibrated (f_ck)", f"{site_comp_strength:.2f} MPa", delta=f"-{(1-k_factor)*100:.0f}% Field Loss")
+        col_res3.metric("Flexural Strength (f_cr)", f"{flex_strength:.2f} MPa")
+        col_res4.metric("Workability (Slump)", f"{slump_mm:.0f} mm")
 
         # --- SHAP Plot ---
         st.divider()
         st.subheader("🧠 SHAP Feature Contribution (Compressive Strength)")
+        st.write("Waterfall chart explaining parameter impact on the baseline laboratory model:")
         
         explainer = shap.Explainer(model)
         shap_values = explainer(input_scaled)
@@ -128,7 +154,8 @@ if model is not None:
             "Coarse Aggregate (kg/m3)": [coarse_agg],
             "Fine Aggregate (kg/m3)": [fine_agg],
             "Age (Days)": [age],
-            "Predicted Compressive Strength (MPa)": [round(comp_strength, 2)],
+            "Lab Baseline Strength (MPa)": [round(lab_comp_strength, 2)],
+            "Site Calibrated Strength (MPa)": [round(site_comp_strength, 2)],
             "Predicted Flexural Strength (MPa)": [round(flex_strength, 2)],
             "Predicted Slump (mm)": [round(slump_mm, 1)]
         }
@@ -139,7 +166,7 @@ if model is not None:
         st.download_button(
             label="Download Complete Report (CSV)",
             data=csv_data,
-            file_name="concrete_multi_property_report.csv",
+            file_name="calibrated_concrete_report.csv",
             mime="text/csv",
             type="primary"
         )
